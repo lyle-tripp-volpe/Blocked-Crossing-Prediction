@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import sys
+import unittest
+from datetime import time
+from pathlib import Path
+from unittest.mock import patch
+
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
+
+import analyze_blocked_crossings as mod
+
+
+class PreprocessBlockedCrossingsTests(unittest.TestCase):
+    def test_preprocess_blocked_crossings_reads_xlsx_and_preserves_datetime_dtype(self) -> None:
+        sample = pd.DataFrame(
+            {
+                "Crossing ID": [" 1001 ", "1002"],
+                "Date/Time": pd.to_datetime(["2025-01-01 12:34:56", "2025-01-02 00:00:00"]),
+                "Reason": ["A", "B"],
+                "Duration": ["10", "20"],
+                "State": ["TX", "CA"],
+            }
+        )
+
+        xlsx_path = Path("blocked_crossings.xlsx")
+        csv_path = Path("blocked_crossings.csv")
+
+        captured: dict[str, object] = {}
+
+        def fake_to_csv(self: pd.DataFrame, path: Path, **kwargs: object) -> None:
+            captured["path"] = Path(path)
+            captured["written"] = self.copy()
+
+        with patch.object(mod.pd, "read_excel", return_value=sample.copy()), patch.object(
+            mod.pd.DataFrame, "to_csv", fake_to_csv
+        ), patch.object(mod, "read_csv", return_value=sample.copy()):
+            result = mod.preprocess_blocked_crossings(xlsx_path, csv_path)
+
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(result["Date/Time"]))
+        self.assertEqual(captured["path"], csv_path)
+        self.assertTrue(pd.api.types.is_datetime64_any_dtype(captured["written"]["Date/Time"]))
+        self.assertEqual(result.loc[0, "Date/Time"].time(), time(12, 34, 56))
+        self.assertEqual(result.loc[1, "Date/Time"].time(), time(0, 0))
+
+
+if __name__ == "__main__":
+    unittest.main()

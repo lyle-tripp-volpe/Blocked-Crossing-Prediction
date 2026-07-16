@@ -14,7 +14,8 @@ import seaborn as sns
 '''
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_BLOCKED = REPO_ROOT / "data" / "blocked_crossings_2025(Sheet1).csv"
+DEFAULT_BLOCKED_XLSX = REPO_ROOT / "data" / "blocked_crossings_2025.xlsx"
+DEFAULT_BLOCKED_CSV = REPO_ROOT / "data" / "blocked_crossings_2025(Sheet1).csv"
 DEFAULT_INVENTORY = REPO_ROOT / "data" / "Crossing_Inventory_Data_(Form_71)_-_Current_20260707.csv"
 DEFAULT_OUTPUT = REPO_ROOT / "analysis_outputs"
 
@@ -132,9 +133,19 @@ def summarize_state_density(df: pd.DataFrame) -> pd.DataFrame:
     return grouped.sort_values(["blocked_crossing_share_pct", "blocked_events"], ascending=False).reset_index()
 
 
+def preprocess_blocked_crossings(blocked_xlsx: Path, blocked_csv: Path) -> pd.DataFrame:
+    blocked = clean_columns(pd.read_excel(blocked_xlsx))
+    blocked.to_csv(blocked_csv, index=False)
+    blocked = clean_columns(read_csv(blocked_csv, parse_dates=["Date/Time"]))
+    if "Date/Time" not in blocked.columns:
+        raise KeyError("Missing expected blocked crossing date/time column: Date/Time")
+    if not pd.api.types.is_datetime64_any_dtype(blocked["Date/Time"]):
+        raise TypeError("Blocked crossing Date/Time column was not read as a pandas datetime dtype")
+    return blocked
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Join blocked crossing events to Form 71 inventory data.")
-    parser.add_argument("--blocked", type=Path, default=DEFAULT_BLOCKED)
     parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
@@ -142,7 +153,7 @@ def main() -> None:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    blocked = clean_columns(read_csv(args.blocked))
+    blocked = preprocess_blocked_crossings(DEFAULT_BLOCKED_XLSX, DEFAULT_BLOCKED_CSV)
     inventory = clean_columns(read_csv(args.inventory, low_memory=False))
 
     blocked["Crossing ID"] = clean_ids(blocked["Crossing ID"])
@@ -152,7 +163,6 @@ def main() -> None:
     inventory = inventory.sort_values(["Crossing ID", "Revision Date"]).drop_duplicates("Crossing ID", keep="last")
 
     blocked = blocked.dropna(subset=["Crossing ID"]).copy()
-    blocked["Date/Time"] = pd.to_datetime(blocked.get("Date/Time"), errors="coerce")
 
     blocked_counts = blocked.groupby("Crossing ID").size().rename("blocked_event_count").reset_index()
     inventory_with_counts = inventory.merge(blocked_counts, on="Crossing ID", how="left")
